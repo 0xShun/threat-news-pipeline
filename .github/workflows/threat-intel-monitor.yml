@@ -1,0 +1,57 @@
+name: 🛡️ Threat Intelligence Monitor
+
+on:
+  schedule:
+    # 7:00 AM UTC  (morning brief)
+    - cron: '0 7 * * *'
+    # 2:00 PM UTC  (afternoon brief)
+    - cron: '0 14 * * *'
+  workflow_dispatch:
+    inputs:
+      keywords:
+        description: 'Comma-separated keywords to filter (overrides default)'
+        required: false
+        default: ''
+      dry_run:
+        description: 'Dry run (print alerts without sending to Teams)'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
+
+jobs:
+  threat-monitor:
+    name: Fetch & Filter Threat News
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run threat intelligence monitor
+        env:
+          TEAMS_WEBHOOK_URL: ${{ secrets.TEAMS_WEBHOOK_URL }}
+          NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
+          KEYWORDS_OVERRIDE: ${{ github.event.inputs.keywords }}
+          DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
+        run: python scripts/threat_monitor.py
+
+      - name: Upload alert log (artifact)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: threat-intel-log-${{ github.run_id }}
+          path: threat_intel_log.json
+          retention-days: 30
