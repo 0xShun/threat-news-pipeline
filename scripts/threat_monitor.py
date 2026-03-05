@@ -67,7 +67,7 @@ THREAT_FEEDS = [
     },
     {
         "name": "Security Week",
-        "url": "https://feeds.securityweek.com/securityweek",
+        "url": "https://www.securityweek.com/feed/",
         "type": "rss",
     },
     {
@@ -131,6 +131,10 @@ def article_id(url: str) -> str:
 def clean_html(raw: str) -> str:
     if not raw:
         return ""
+    # If the string contains no HTML tags, skip BeautifulSoup to avoid
+    # MarkupResemblesLocatorWarning when a bare URL or plain text is passed in.
+    if "<" not in raw:
+        return re.sub(r'\s+', ' ', raw.strip())[:500]
     soup = BeautifulSoup(raw, "html.parser")
     text = soup.get_text(separator=" ").strip()
     return re.sub(r'\s+', ' ', text)[:500]
@@ -327,28 +331,33 @@ def fetch_all_articles(feeds: list[dict], keywords: list[str] = None) -> list[di
 
 
 # ─────────────────────────────────────────────
-# Teams Notification
+# Teams Notification (Power Automate webhook)
+# ─────────────────────────────────────────────
+# Uses the "When a Teams webhook request is received" trigger in Power Automate
+# (Microsoft Teams connector). That trigger generates a webhook URL and expects
+# Adaptive Card payloads in the format below.
+# Store the generated webhook URL in GitHub Secrets as TEAMS_WEBHOOK_URL.
+# No additional Power Automate actions are needed — the trigger posts the card
+# directly to the channel you configure when creating the flow.
 # ─────────────────────────────────────────────
 
-# Severity colour mapping — based on matched keyword signals
+# Severity colour mapping — based on source/title keyword signals
 _SEVERITY_COLOURS = {
-    "cisa kev":   "Attention",   # red   — confirmed exploited
-    "exploit":    "Attention",
-    "0-day":      "Attention",
-    "zero-day":   "Attention",
-    "rce":        "Attention",
-    "critical":   "Attention",
-    "high":       "Warning",     # yellow
-    "patch":      "Warning",
-    "advisory":   "Warning",
-    "default":    "Good",        # green — informational
+    "cisa kev":  "Attention",   # red   — confirmed exploited
+    "exploit":   "Attention",
+    "0-day":     "Attention",
+    "zero-day":  "Attention",
+    "rce":       "Attention",
+    "critical":  "Attention",
+    "high":      "Warning",     # yellow
+    "patch":     "Warning",
+    "advisory":  "Warning",
+    "default":   "Good",        # green — informational
 }
 
 
 def _alert_colour(alert: dict) -> str:
-    source_lower = alert["source"].lower()
-    title_lower  = alert["title"].lower()
-    combined     = source_lower + " " + title_lower
+    combined = (alert["source"] + " " + alert["title"]).lower()
     for key, colour in _SEVERITY_COLOURS.items():
         if key in combined:
             return colour
@@ -370,18 +379,16 @@ def _format_published(pub_str: str) -> str:
 
 def build_single_alert_card(alert: dict) -> dict:
     """
-    Build one Adaptive Card per alert — analyst-focused, no pipeline metadata.
-    Shows: title (linked), source, published date, summary, matched keywords.
+    Build one Adaptive Card per alert for the Power Automate
+    'When a Teams webhook request is received' trigger.
     """
     colour     = _alert_colour(alert)
     pub_str    = _format_published(alert.get("published", ""))
     matched_kw = "  ·  ".join(alert["matched_keywords"])
     summary    = alert.get("summary", "").strip()
-    # Truncate summary to 300 chars for readability
     if len(summary) > 300:
         summary = summary[:297] + "…"
 
-    # Accent bar colour maps to Adaptive Card container style
     container_style = {
         "Attention": "attention",
         "Warning":   "warning",
@@ -389,162 +396,144 @@ def build_single_alert_card(alert: dict) -> dict:
     }.get(colour, "default")
 
     body = [
-        # ── Title row ─────────────────────────────────────────────────────────
         {
-            "type": "TextBlock",
-            "text": f"[{alert['title']}]({alert['url']})",
+            "type":   "TextBlock",
+            "text":   f"[{alert['title']}]({alert['url']})",
             "weight": "Bolder",
-            "size": "Medium",
-            "wrap": True,
-            "color": colour,
+            "size":   "Medium",
+            "wrap":   True,
+            "color":  colour,
         },
-        # ── Meta row: source  |  date ─────────────────────────────────────────
         {
-            "type": "ColumnSet",
+            "type":    "ColumnSet",
             "spacing": "Small",
             "columns": [
                 {
-                    "type": "Column",
+                    "type":  "Column",
                     "width": "stretch",
-                    "items": [
-                        {
-                            "type": "TextBlock",
-                            "text": f"📰 {alert['source']}",
-                            "size": "Small",
-                            "isSubtle": True,
-                            "wrap": False,
-                        }
-                    ],
+                    "items": [{
+                        "type":     "TextBlock",
+                        "text":     f"📰 {alert['source']}",
+                        "size":     "Small",
+                        "isSubtle": True,
+                        "wrap":     False,
+                    }],
                 },
                 {
-                    "type": "Column",
+                    "type":  "Column",
                     "width": "auto",
-                    "items": [
-                        {
-                            "type": "TextBlock",
-                            "text": f"� {pub_str}",
-                            "size": "Small",
-                            "isSubtle": True,
-                            "wrap": False,
-                            "horizontalAlignment": "Right",
-                        }
-                    ],
+                    "items": [{
+                        "type":               "TextBlock",
+                        "text":               f"🕐 {pub_str}",
+                        "size":               "Small",
+                        "isSubtle":           True,
+                        "wrap":               False,
+                        "horizontalAlignment": "Right",
+                    }],
                 },
             ],
         },
     ]
 
-    # ── Summary (only if present) ──────────────────────────────────────────────
     if summary:
         body.append({
-            "type": "TextBlock",
-            "text": summary,
-            "wrap": True,
-            "size": "Small",
+            "type":    "TextBlock",
+            "text":    summary,
+            "wrap":    True,
+            "size":    "Small",
             "spacing": "Small",
         })
 
-    # ── Keyword tags ──────────────────────────────────────────────────────────
     body.append({
-        "type": "TextBlock",
-        "text": f"🔍 **Keywords matched:** {matched_kw}",
-        "wrap": True,
-        "size": "Small",
+        "type":    "TextBlock",
+        "text":    f"🔍 **Keywords matched:** {matched_kw}",
+        "wrap":    True,
+        "size":    "Small",
         "spacing": "Small",
-        "color": colour,
+        "color":   colour,
     })
 
     return {
         "type": "message",
-        "attachments": [
-            {
-                "contentType": "application/vnd.microsoft.card.adaptive",
-                "content": {
-                    "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
-                    "type":    "AdaptiveCard",
-                    "version": "1.5",
-                    "body": [
-                        {
-                            "type":  "Container",
-                            "style": container_style,
-                            "bleed": True,
-                            "items": body,
-                        }
-                    ],
-                },
-            }
-        ],
+        "attachments": [{
+            "contentType": "application/vnd.microsoft.card.adaptive",
+            "contentUrl":  None,
+            "content": {
+                "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+                "type":    "AdaptiveCard",
+                "version": "1.5",
+                "body": [{
+                    "type":  "Container",
+                    "style": container_style,
+                    "bleed": True,
+                    "items": body,
+                }],
+            },
+        }],
     }
 
 
 def build_digest_header(alerts: list[dict], session_label: str) -> dict:
-    """
-    A single header card posted before the individual alert cards.
-    Tells analysts how many items were found in this brief.
-    """
+    """Header card — posted before the individual alert cards."""
     timestamp = datetime.now(timezone.utc).strftime("%d %b %Y · %H:%M UTC")
-    count      = len(alerts)
-    noun       = "alert" if count == 1 else "alerts"
+    count = len(alerts)
+    noun  = "alert" if count == 1 else "alerts"
 
     return {
         "type": "message",
-        "attachments": [
-            {
-                "contentType": "application/vnd.microsoft.card.adaptive",
-                "content": {
-                    "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
-                    "type":    "AdaptiveCard",
-                    "version": "1.5",
-                    "body": [
+        "attachments": [{
+            "contentType": "application/vnd.microsoft.card.adaptive",
+            "contentUrl":  None,
+            "content": {
+                "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+                "type":    "AdaptiveCard",
+                "version": "1.5",
+                "body": [{
+                    "type": "ColumnSet",
+                    "columns": [
                         {
-                            "type": "ColumnSet",
-                            "columns": [
+                            "type":  "Column",
+                            "width": "auto",
+                            "items": [{"type": "TextBlock", "text": "🛡️", "size": "ExtraLarge"}],
+                        },
+                        {
+                            "type":  "Column",
+                            "width": "stretch",
+                            "items": [
                                 {
-                                    "type":  "Column",
-                                    "width": "auto",
-                                    "items": [{"type": "TextBlock", "text": "🛡️", "size": "ExtraLarge"}],
+                                    "type":   "TextBlock",
+                                    "text":   f"Threat Intelligence — {session_label}",
+                                    "weight": "Bolder",
+                                    "size":   "Large",
                                 },
                                 {
-                                    "type":  "Column",
-                                    "width": "stretch",
-                                    "items": [
-                                        {
-                                            "type":   "TextBlock",
-                                            "text":   f"Threat Intelligence — {session_label}",
-                                            "weight": "Bolder",
-                                            "size":   "Large",
-                                        },
-                                        {
-                                            "type":      "TextBlock",
-                                            "text":      f"{count} new {noun} found  ·  {timestamp}",
-                                            "size":      "Small",
-                                            "isSubtle":  True,
-                                            "spacing":   "None",
-                                        },
-                                    ],
+                                    "type":     "TextBlock",
+                                    "text":     f"{count} new {noun} found  ·  {timestamp}",
+                                    "size":     "Small",
+                                    "isSubtle": True,
+                                    "spacing":  "None",
                                 },
                             ],
-                        }
+                        },
                     ],
-                },
-            }
-        ],
+                }],
+            },
+        }],
     }
 
 
 def send_teams_alert(webhook_url: str, alerts: list[dict], keywords: list[str], dry_run: bool = False):
     """
-    Posts one header card + one card per alert to Teams.
-    Ordered: most recently published first.
+    Posts one header card + one Adaptive Card per alert to Teams via the
+    Power Automate 'When a Teams webhook request is received' trigger.
+    Alerts are ordered most recently published first.
     """
-    # Sort newest first
     alerts_sorted = sorted(
         alerts,
         key=lambda a: a.get("pub_dt") or datetime.min.replace(tzinfo=timezone.utc),
         reverse=True,
     )
 
-    # Determine session label from current UTC hour
     hour = datetime.now(timezone.utc).hour
     session_label = "Morning Brief" if hour < 12 else "Afternoon Brief"
 
@@ -553,7 +542,7 @@ def send_teams_alert(webhook_url: str, alerts: list[dict], keywords: list[str], 
         payloads.append(build_single_alert_card(alert))
 
     if dry_run:
-        log.info("DRY RUN — Teams payloads:")
+        log.info("DRY RUN — Power Automate Adaptive Card payloads:")
         for p in payloads:
             print(json.dumps(p, indent=2))
         return
