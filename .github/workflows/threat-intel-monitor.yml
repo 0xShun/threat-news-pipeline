@@ -1,5 +1,4 @@
 name: 🛡️ Threat Intelligence Monitor
-
 on:
   schedule:
     # 7:00 AM UTC  (morning brief)
@@ -13,20 +12,18 @@ on:
         required: false
         default: ''
       dry_run:
-        description: 'Dry run (print alerts without sending to Teams)'
+        description: 'Dry run (print alerts without sending to Slack/Teams)'
         required: false
         default: 'false'
         type: choice
         options:
           - 'false'
           - 'true'
-
 jobs:
   threat-monitor:
     name: Fetch & Filter Threat News
     runs-on: ubuntu-latest
     timeout-minutes: 10
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -42,7 +39,9 @@ jobs:
 
       - name: Run threat intelligence monitor
         env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
           TEAMS_WEBHOOK_URL: ${{ secrets.TEAMS_WEBHOOK_URL }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
           KEYWORDS_OVERRIDE: ${{ github.event.inputs.keywords }}
           DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
