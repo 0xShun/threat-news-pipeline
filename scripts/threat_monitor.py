@@ -280,7 +280,7 @@ def summarize_with_gemini(alerts: list[dict], keywords: list[str]) -> str:
         f"Alerts to analyze:\n{alerts_text}"
     )
 
-    url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent"
+    url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
     payload = {
         "contents": [{"parts": [{"text": prompt}]}],
         "generationConfig": {"temperature": 0.3, "maxOutputTokens": 1024},
