@@ -286,16 +286,24 @@ def summarize_with_gemini(alerts: list[dict], keywords: list[str]) -> str:
         "generationConfig": {"temperature": 0.3, "maxOutputTokens": 1024},
     }
 
-    try:
-        resp = requests.post(url, params={"key": api_key}, json=payload, timeout=30)
-        resp.raise_for_status()
-        data = resp.json()
-        summary = data["candidates"][0]["content"]["parts"][0]["text"]
-        log.info("Gemini summary generated successfully.")
-        return summary.strip()
-    except Exception as e:
-        log.warning(f"Gemini API call failed: {e}")
-        return ""
+    import time
+    for attempt in range(3):
+        try:
+            resp = requests.post(url, params={"key": api_key}, json=payload, timeout=30)
+            resp.raise_for_status()
+            data = resp.json()
+            summary = data["candidates"][0]["content"]["parts"][0]["text"]
+            log.info("Gemini summary generated successfully.")
+            return summary.strip()
+        except Exception as e:
+            if "429" in str(e) and attempt < 2:
+                wait = 15 * (attempt + 1)
+                log.warning(f"Gemini rate limited, retrying in {wait}s... (attempt {attempt + 1}/3)")
+                time.sleep(wait)
+            else:
+                log.warning(f"Gemini API call failed: {e}")
+                return ""
+    return ""
 
 
 # ─────────────────────────────────────────────
